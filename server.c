@@ -6,13 +6,13 @@
 #include <mysql/mysql.h>
 #include "sockets.c"
 
-#define true 1==1
+#define true (1==1)
 #define false !true
 #define MAX 100
-#define MYSQL_SERVER_ADDR 127.0.0.1
-#define MYSQL_SERVER_USER messenger
-#define MYSQL_SERVER_PASSWORD msg123
-#define MYSQL_SERVER_DB messenger
+#define MYSQL_SERVER_ADDR "127.0.0.1"
+#define MYSQL_SERVER_USER "messenger"
+#define MYSQL_SERVER_PASSWORD "msg123"
+#define MYSQL_SERVER_DB "messenger"
 
 int main(){
 
@@ -23,14 +23,14 @@ int main(){
 	socklen_t tamanho;
 	struct sockaddr_in local, remoto;
 	int socketLocal, socketNovo, porta, ever = 1;
-	char *msg, *comando, query[300], userCadastro[15], userLogin[15], passLogin[30], passCadastro[30], linha[MAX], userEncontrado = 0;
+	char *msg, *comando, query[300], 	userLogin[15], passLogin[30], userEncontrado = 0;
 
 	msg = malloc(MAX);
 	comando = malloc(MAX);
 
 
 	conexao = mysql_init(NULL);
-	if(mysql_real_connect(conexao,"127.0.0.1","messenger","msg123","messenger",0,NULL,0)){
+	if(mysql_real_connect(conexao, MYSQL_SERVER_ADDR, MYSQL_SERVER_USER, MYSQL_SERVER_PASSWORD,MYSQL_SERVER_DB,0,NULL,0)){
 		perror("Conexao MYSQL");
 	}else{
 		perror("Conexao MYSQL");
@@ -51,13 +51,12 @@ int main(){
 		socketNovo = accept(socketLocal, (struct sockaddr *)&remoto, &tamanho);
 		if(socketNovo == SOCKET_ERROR){
 			perror("accept");
-			//exit(0);
+			exit(0);
 		}
 		if((recv(socketNovo, msg, MAX, 0)) == SOCKET_ERROR){
 			perror("socket recv");
 			exit(0);
 		}
-		printf("%s conectou-se a partir de: %s\n",userCadastro, inet_ntoa(remoto.sin_addr));
 		sscanf(msg, "%s", comando); /* pega primeira palavra da string msg */
 		if(!strcmp(comando, "checaLogin")){
 			userEncontrado = false;
@@ -133,4 +132,5 @@ int main(){
 			}
 		}
 	}
+	return 0;
 }
