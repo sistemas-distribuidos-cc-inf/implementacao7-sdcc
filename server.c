@@ -1,9 +1,10 @@
-/* Copilar com:   gcc server.c -o server $(mysql_config --libs)  */
+/* Copilar com:   gcc server.c -o server $(mysql_config --libs) -l json -ansi -Wall  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <mysql/mysql.h>
+#include <json/json.h>
 #include "sockets.c"
 
 #define true (1==1)
@@ -20,13 +21,15 @@ int main(){
 	MYSQL_RES *res;
 	MYSQL_ROW row;
 
+	json_object * jobj;
 	socklen_t tamanho;
 	struct sockaddr_in local, remoto;
-	int socketLocal, socketNovo, porta, ever = 1;
-	char *msg, *comando, query[300], 	userLogin[15], passLogin[30], userEncontrado = 0;
+	int socketLocal, socketNovo, ip, porta, tamMsg, ever = 1;
+	char *msg, *acao, jobj_string[300], query[300], userLogin[15], passLogin[30], userEncontrado = 0;
+	long id, id_dest;
 
 	msg = malloc(MAX);
-	comando = malloc(MAX);
+	acao = malloc(MAX);
 
 
 	conexao = mysql_init(NULL);
@@ -34,6 +37,7 @@ int main(){
 		perror("Conexao MYSQL");
 	}else{
 		perror("Conexao MYSQL");
+		exit(0);
 	}
 
 	cria_socket(SERVER_ADDR, PORTA, &socketLocal, &local);
@@ -53,16 +57,33 @@ int main(){
 			perror("accept");
 			exit(0);
 		}
-		if((recv(socketNovo, msg, MAX, 0)) == SOCKET_ERROR){
+		if((recv(socketNovo, jobj_string, 300, 0)) == SOCKET_ERROR){
 			perror("socket recv");
 			exit(0);
 		}
-		sscanf(msg, "%s", comando); /* pega primeira palavra da string msg */
-		if(!strcmp(comando, "checaLogin")){
+		jobj = json_tokener_parse(jobj_string);
+		json_object_object_foreach(jobj, key, val){
+			if(!strcmp(key, "acao")){
+				strcpy(acao, (char *)val);
+				if (!strcmp(acao, "login") || !strcmp(acao, "cadastrar")){
+					if(!strcmp(key, "usuario")) strcpy(userLogin, json_object_get_string(val));
+					if(!strcmp(key, "senha")) strcpy(passLogin, json_object_get_string(val));
+				}else if (!strcmp(acao, "checkLastSeen") || !strcmp(acao, "updateLastSeen") || !strcmp(acao, "checkUserInfoConn") || !strcmp(acao, "checkPendingMsg")){
+					id = atol(json_object_get_string(val));
+				}else if (!strcmp(acao, "insertPendingMsg")){
+					if(!strcmp(key, "userId")) id = atol(json_object_get_string(val));
+					if(!strcmp(key, "userIdDest")) id_dest = atol(json_object_get_string(val));
+					if(!strcmp(key, "msg")) strcpy(msg, json_object_get_string(val));
+				}else if (!strcmp(acao, "editInfoConn")){
+					if(!strcmp(key, "userId")) id = atol(json_object_get_string(val));
+					if(!strcmp(key, "IP")) ip = atoi(json_object_get_string(val));
+					if(!strcmp(key, "porta")) porta = atoi(json_object_get_string(val));
+				}
+			}
+		}
+		if(!strcmp(acao, "login")){
 			userEncontrado = false;
 			printf("%s tentando login\n", inet_ntoa(remoto.sin_addr));
-			sscanf(msg, "%*s %s", userLogin);
-			sscanf(msg, "%*s %*s %s", passLogin);
 			sprintf(query, "SELECT * FROM cadastro WHERE usuario = '%s'", userLogin);
 			if(mysql_query(conexao, query)){
 				fprintf(stderr, "%s\n", mysql_error(conexao));
@@ -73,14 +94,23 @@ int main(){
 			if (mysql_num_rows(res) > 0){
 				userEncontrado = true;
 				if (!strcmp(row[2], passLogin)){
+					sprintf(query, "UPDATE status SET last_seen = NOW() WHERE id = %d", row[1]);
+					if(mysql_query(conexao, query)){
+						fprintf(stderr, "%s\n", mysql_error(conexao));
+						exit(1);
+					}
 					printf("%s conectou-se a partir de: %s\n", row[1], inet_ntoa(remoto.sin_addr));
-					if((send(socketNovo, "ok: Senha Correta!", 14, 0)) == SOCKET_ERROR){
+					strcpy(jobj_string, "\"resposta\" : \"ok\", \"motivo\" : \"ok\" ");
+					tamMsg = strlen(jobj_string);
+					if((send(socketNovo, jobj_string, tamMsg, 0)) == SOCKET_ERROR){
 						perror("socket send");
 						exit(0);
 					}
 				}else{
 					printf("%s falha conexao. \n\tMotivo: senha incorreta\n", inet_ntoa(remoto.sin_addr));
-					if((send(socketNovo, "erro: Senha Incorreta!", 22, 0)) == SOCKET_ERROR){
+					strcpy(jobj_string, " \"resposta\" : \"erro\", \"motivo\" : \"Senha incorreta\" ");
+					tamMsg = strlen(jobj_string);
+					if((send(socketNovo, jobj_string, tamMsg, 0)) == SOCKET_ERROR){
 						perror("socket send");
 						exit(0);
 					}
@@ -88,22 +118,16 @@ int main(){
 			}
 			if(!userEncontrado){
 				printf("Usuario nao cadastrado\n");
-				if((send(socketNovo, "erro: Usuario nao cadastrado", 28, 0)) == SOCKET_ERROR){
+				strcpy(jobj_string, " \"resposta\" : \"erro\", \"motivo\" : \"Usuario nao cadastrado\" ");
+				tamMsg = strlen(jobj_string);
+				if((send(socketNovo, jobj_string, tamMsg, 0)) == SOCKET_ERROR){
 					perror("socket send");
 					exit(0);
 				}
 			}
 			mysql_free_result(res);
 		}else 
-		if(!strcmp(comando, "cadastrar:")){
-			printf("entrou cadastrar\n");
-			sscanf(msg, "%*s %s", userLogin);
-			printf("ps 1 sscanf\n");
-			sscanf(msg, "%*s %*s %s", passLogin);
-			printf("ps 2 sscanf\n");
-			sscanf(msg, "%*s %*s %*s %d", &porta);
-			printf("pre cadastrar\n");
-			printf("%s\n", passLogin);
+		if(!strcmp(acao, "cadastrar")){
 			sprintf(query, "SELECT COUNT(*) FROM cadastro WHERE usuario = '%s'", userLogin);
 			if(mysql_query(conexao, query)){
 				fprintf(stderr, "%s\n", mysql_error(conexao));
@@ -112,25 +136,51 @@ int main(){
 			res = mysql_use_result(conexao);
 			if (mysql_fetch_row(res)){
 				userEncontrado = true;
-				if((send(socketNovo, "erro: Usuario ja cadastrado", 28, 0)) == SOCKET_ERROR){
+				strcpy(jobj_string, " \"resposta\" : \"erro\", \"motivo\" : \"Usuario ja cadastrado\" ");
+				tamMsg = strlen(jobj_string);
+				if((send(socketNovo, jobj_string, tamMsg, 0)) == SOCKET_ERROR){
 					perror("socket send");
 					exit(0);
 				}
 			}
+			mysql_free_result(res);
 			if(!userEncontrado){
-				sprintf(query, "INSERT INTO cadastro (usuario, senha) VALUES ('%s', '%s')", userLogin, passLogin);
+				sprintf(query, "INSERT INTO cadastro (usuario, senha) VALUES ('%s', '%s')", userLogin, passLogin); /* obs: a porra da senha vai em plain text mesmo, to nem ai */
 				if(mysql_query(conexao, query)){
 					fprintf(stderr, "%s\n", mysql_error(conexao));
 					exit(1);
 				}else{
 					perror("Usuario cadastrado");
 				}
-				if((send(socketNovo, "ok: Usuario cadastrado", 28, 0)) == SOCKET_ERROR){
+
+				strcpy(jobj_string, "\"resposta\" : \"ok\", \"motivo\" : \"ok\" ");
+				tamMsg = strlen(jobj_string);
+				if((send(socketNovo, jobj_string, tamMsg, 0)) == SOCKET_ERROR){
 					perror("socket send");
 					exit(0);
 				}
+				id = mysql_insert_id(conexao);
+				sprintf(query, "INSERT INTO status (id_usuario, last_seen) VALUES ('%lu', 'NOW()')", id);
+				if(mysql_query(conexao, query)){
+					fprintf(stderr, "Atualizacao status: %s\n", mysql_error(conexao));
+					exit(1);
+				}
+				
+
 			}
+		}else 
+		if(!strcmp(acao, "listarUsuarios")){
+			if(mysql_query(conexao, "SELECT id, usuario FROM cadastro")){
+				fprintf(stderr, "%s\n", mysql_error(conexao));
+				exit(1);
+			}
+			res = mysql_use_result(conexao);
+			mysql_num_rows(res);
 		}
 	}
+	
+	free(msg);
+	free(acao);
+
 	return 0;
 }
